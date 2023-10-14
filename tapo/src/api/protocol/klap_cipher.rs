@@ -1,7 +1,8 @@
 use std::sync::atomic::{AtomicI32, Ordering};
+use sha1::Sha1;
+use sha2::{Sha256,Digest};
 
-use openssl::sha::{Sha1, Sha256};
-use openssl::symm::{decrypt, encrypt, Cipher};
+use super::encryption_helpers::{encrypt_aes_128_cbc, decrypt_aes_128_cbc};
 
 #[derive(Debug)]
 pub(super) struct KlapCipher {
@@ -29,15 +30,12 @@ impl KlapCipher {
         })
     }
 
+    
+
     pub fn encrypt(&self, data: String) -> anyhow::Result<(Vec<u8>, i32)> {
         let seq = self.seq.fetch_add(1, Ordering::Relaxed) + 1;
 
-        let cipher_bytes = encrypt(
-            Cipher::aes_128_cbc(),
-            &self.key,
-            Some(&self.iv_seq(seq)),
-            data.as_bytes(),
-        )?;
+        let cipher_bytes = encrypt_aes_128_cbc(data.as_bytes(), &self.key, &self.iv_seq(seq));
 
         let signature = Self::sha256(
             &[
@@ -54,17 +52,14 @@ impl KlapCipher {
     }
 
     pub fn decrypt(&self, seq: i32, cipher_bytes: Vec<u8>) -> anyhow::Result<String> {
-        let decrypted_bytes = decrypt(
-            Cipher::aes_128_cbc(),
-            &self.key,
-            Some(&self.iv_seq(seq)),
-            &cipher_bytes[32..],
-        )?;
+        let decrypted_bytes = decrypt_aes_128_cbc(&cipher_bytes[32..], &self.key, &self.iv_seq(seq));
+        
         let decrypted = std::str::from_utf8(&decrypted_bytes)?.to_string();
 
         Ok(decrypted)
     }
 }
+
 
 impl KlapCipher {
     fn key_derive(local_hash: &Vec<u8>) -> Vec<u8> {
@@ -101,12 +96,12 @@ impl KlapCipher {
     pub fn sha256(value: &[u8]) -> [u8; 32] {
         let mut hasher = Sha256::new();
         hasher.update(value);
-        hasher.finish()
+        hasher.finalize().into()
     }
 
     pub fn sha1(value: &[u8]) -> [u8; 20] {
         let mut hasher = Sha1::new();
         hasher.update(value);
-        hasher.finish()
+        hasher.finalize().into()
     }
 }

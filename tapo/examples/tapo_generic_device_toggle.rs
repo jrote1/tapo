@@ -15,9 +15,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .filter(Some("tapo"), log_level)
         .init();
 
-    let tapo_username = env::var("TAPO_USERNAME")?;
-    let tapo_password = env::var("TAPO_PASSWORD")?;
-    let ip_address = env::var("IP_ADDRESS")?;
+    let tapo_username = "";
+    let tapo_password = "";
+    let ip_address = "";
 
     let device = ApiClient::new(tapo_username, tapo_password)?
         .generic_device(ip_address)

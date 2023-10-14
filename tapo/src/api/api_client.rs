@@ -1,8 +1,7 @@
 use std::fmt;
 
 use async_trait::async_trait;
-use isahc::prelude::Configurable;
-use isahc::HttpClient;
+use reqwest::Client;
 use log::debug;
 use serde::de::DeserializeOwned;
 
@@ -65,7 +64,13 @@ impl ApiClient {
         tapo_username: impl Into<String>,
         tapo_password: impl Into<String>,
     ) -> Result<ApiClient, Error> {
-        let client = HttpClient::builder().title_case_headers(true).build()?;
+        
+        #[cfg(target_arch = "wasm32")]
+        let client = Client::builder().build()?;
+
+        #[cfg(not(target_arch = "wasm32"))]
+        let client = Client::builder().http1_title_case_headers().cookie_store(true).build()?;
+
         Ok(Self {
             protocol: TapoProtocol::new(client, tapo_username.into(), tapo_password.into()),
         })

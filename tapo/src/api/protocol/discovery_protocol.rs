@@ -1,5 +1,5 @@
-use isahc::{AsyncReadResponseExt, HttpClient, Request};
 use log::debug;
+use reqwest::Client;
 
 use crate::api::protocol::klap_protocol::KlapProtocol;
 use crate::requests::{EmptyParams, TapoParams, TapoRequest};
@@ -10,13 +10,13 @@ use super::{passthrough_protocol::PassthroughProtocol, TapoProtocolType};
 
 #[derive(Debug, Clone)]
 pub(crate) struct DiscoveryProtocol {
-    client: HttpClient,
+    client: Client,
     username: String,
     password: String,
 }
 
 impl DiscoveryProtocol {
-    pub fn new(client: HttpClient, username: String, password: String) -> Self {
+    pub fn new(client: Client, username: String, password: String) -> Self {
         Self {
             client,
             username,
@@ -59,13 +59,11 @@ impl DiscoveryProtocol {
         let request_string = serde_json::to_string(&request)?;
         debug!("Component negotiation request: {request_string}");
 
-        let request = Request::post(url)
-            .body(request_string)
-            .map_err(isahc::Error::from)?;
+        let request = self.client.post(url)
+            .body(request_string);
 
-        let response = self
-            .client
-            .send_async(request)
+        let response = request
+            .send()
             .await?
             .json::<TapoResponse<serde_json::Value>>()
             .await?;

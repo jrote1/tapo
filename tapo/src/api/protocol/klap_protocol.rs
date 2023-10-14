@@ -1,12 +1,10 @@
 use std::fmt;
 
 use async_trait::async_trait;
-use isahc::cookies::CookieJar;
-use isahc::prelude::Configurable;
-use isahc::{AsyncReadResponseExt, HttpClient, Request};
 use log::debug;
 use rand::rngs::StdRng;
 use rand::{RngCore, SeedableRng};
+use reqwest::Client;
 use serde::de::DeserializeOwned;
 
 use crate::requests::TapoRequest;
@@ -19,8 +17,7 @@ use super::TapoProtocolExt;
 
 #[derive(Debug)]
 pub(crate) struct KlapProtocol {
-    client: HttpClient,
-    cookie_jar: CookieJar,
+    client: Client,
     username: String,
     password: String,
     rng: StdRng,
@@ -28,7 +25,8 @@ pub(crate) struct KlapProtocol {
     cipher: Option<KlapCipher>,
 }
 
-#[async_trait]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 impl TapoProtocolExt for KlapProtocol {
     async fn login(&mut self, url: String) -> Result<(), Error> {
         self.handshake(url).await?;
@@ -57,20 +55,17 @@ impl TapoProtocolExt for KlapProtocol {
 
         let (payload, seq) = cipher.encrypt(request_string)?;
 
-        let request = Request::post(format!("{url}/request?seq={seq}"))
-            .cookie_jar(self.cookie_jar.clone())
-            .body(payload)
-            .map_err(isahc::Error::from)?;
+        let request = self.client.post(format!("{url}/request?seq={seq}"))
+            .body(payload);
 
-        let response = self
-            .client
-            .send_async(request)
+        let response = request
+            .send()
             .await?
             .bytes()
             .await
             .map_err(anyhow::Error::from)?;
 
-        let response_decrypted = cipher.decrypt(seq, response)?;
+        let response_decrypted = cipher.decrypt(seq, response.to_vec())?;
         debug!("Device responded with: {response_decrypted:?}");
 
         let inner_response: TapoResponse<R> = serde_json::from_str(&response_decrypted)?;
@@ -92,10 +87,9 @@ impl TapoProtocolExt for KlapProtocol {
 }
 
 impl KlapProtocol {
-    pub fn new(client: HttpClient, username: String, password: String) -> Self {
+    pub fn new(client: Client, username: String, password: String) -> Self {
         Self {
             client,
-            cookie_jar: CookieJar::new(),
             username,
             password,
             rng: StdRng::from_entropy(),
@@ -105,8 +99,6 @@ impl KlapProtocol {
     }
 
     async fn handshake(&mut self, url: String) -> Result<(), Error> {
-        self.cookie_jar.clear();
-
         let auth_hash = KlapCipher::sha256(
             &[
                 KlapCipher::sha1(self.username.as_bytes()),
@@ -116,8 +108,8 @@ impl KlapProtocol {
         )
         .to_vec();
 
-        let local_seed = self.get_local_seed().to_vec();
-        let remote_seed = self.handshake1(&url, &local_seed, &auth_hash).await?;
+        let mut local_seed = self.get_local_seed().to_vec();
+        let remote_seed = self.handshake1(&url, &mut local_seed, &auth_hash).await?;
 
         self.handshake2(&url, &local_seed, &remote_seed, &auth_hash)
             .await?;
@@ -133,20 +125,17 @@ impl KlapProtocol {
     async fn handshake1(
         &self,
         url: &str,
-        local_seed: &[u8],
+        local_seed: &mut [u8],
         auth_hash: &[u8],
     ) -> Result<Vec<u8>, Error> {
         debug!("Performing handshake1...");
         let url = format!("{url}/handshake1");
 
-        let request = Request::post(&url)
-            .cookie_jar(self.cookie_jar.clone())
-            .body(local_seed.clone())
-            .map_err(isahc::Error::from)?;
+        let request = self.client.post(&url)
+            .body(local_seed.to_owned());
 
-        let response = self
-            .client
-            .send_async(request)
+        let response = request
+            .send()
             .await?
             .bytes()
             .await
@@ -155,6 +144,9 @@ impl KlapProtocol {
         let (remote_seed, server_hash) = response.split_at(16);
 
         let local_hash = KlapCipher::sha256(&[local_seed, remote_seed, auth_hash].concat());
+
+        println!("{:?}", local_hash);
+        println!("{:?}", server_hash);
 
         if local_hash != server_hash {
             return Err(anyhow::anyhow!("Local hash does not match server hash").into());
@@ -179,12 +171,10 @@ impl KlapProtocol {
             &[remote_seed.clone(), local_seed.clone(), auth_hash.clone()].concat(),
         );
 
-        let request = Request::post(&url)
-            .cookie_jar(self.cookie_jar.clone())
-            .body(payload.to_vec())
-            .map_err(isahc::Error::from)?;
+        let request = self.client.post(&url)
+            .body(payload.to_vec());
 
-        let response = self.client.send_async(request).await?;
+        let response = request.send().await?;
 
         if !response.status().is_success() {
             return Err(anyhow::anyhow!("").into());

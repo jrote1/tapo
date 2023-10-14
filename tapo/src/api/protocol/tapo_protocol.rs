@@ -1,7 +1,7 @@
 use std::fmt;
 
 use async_trait::async_trait;
-use isahc::HttpClient;
+use reqwest::Client;
 use serde::de::DeserializeOwned;
 
 use crate::requests::TapoRequest;
@@ -52,8 +52,11 @@ impl Clone for TapoProtocolType {
 #[async_trait]
 impl TapoProtocolExt for TapoProtocol {
     async fn login(&mut self, url: String) -> Result<(), Error> {
-        if let TapoProtocolType::Discovery(protocol) = &mut self.protocol {
-            self.protocol = protocol.discover(&url).await?;
+        match &mut self.protocol {
+            TapoProtocolType::Discovery(protocol) => {
+                self.protocol = protocol.discover(&url).await?;
+            }
+            _ => (),
         }
 
         match &mut self.protocol {
@@ -98,7 +101,7 @@ impl TapoProtocolExt for TapoProtocol {
 }
 
 impl TapoProtocol {
-    pub fn new(client: HttpClient, username: String, password: String) -> Self {
+    pub fn new(client: Client, username: String, password: String) -> Self {
         Self {
             protocol: TapoProtocolType::Discovery(DiscoveryProtocol::new(
                 client, username, password,
